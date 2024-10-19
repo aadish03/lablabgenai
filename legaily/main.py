@@ -10,7 +10,6 @@ from deep_translator import GoogleTranslator
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import google.generativeai as genai
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -21,8 +20,8 @@ from nltk.stem import WordNetLemmatizer
 from pydantic import BaseModel
 from PyPDF2 import PdfReader
 from sentence_transformers import SentenceTransformer, util
-import cohere
-from langchain_community.llms import Cohere
+from llama_cpp import Llama
+import aiml
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -31,24 +30,18 @@ app = FastAPI()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Ensure your Google API key is set in the environment
-google_api_key = ""
-if not google_api_key:
-    logger.error("Google API key not found in environment variables")
-    raise ValueError("Google API key not found in environment variables")
+# Initialize AIML kernel for API key management
+aiml_kernel = aiml.Kernel()
+aiml_kernel.learn("path/to/your/aiml/files/*.aiml")
 
-# Initialize Cohere client
-cohere_api_key = ""
-if not cohere_api_key:
-    logger.error("Cohere API key not found in environment variables")
-    raise ValueError("Cohere API key not found in environment variables")
+# Get Llama 3.2 API key from AIML
+llama_api_key = aiml_kernel.respond("GET LLAMA API KEY")
+if not llama_api_key:
+    logger.error("Llama 3.2 API key not found")
+    raise ValueError("Llama 3.2 API key not found")
 
-cohere_client = cohere.Client(cohere_api_key)
-
-
-# Configure the Gemini model
-genai.configure(api_key=google_api_key)
-model = genai.GenerativeModel('gemini-pro')
+# Initialize Llama 3.2
+llm = Llama(model_path="path/to/llama-3.2-model.gguf", n_ctx=2048, n_threads=4)
 
 # Add CORS middleware
 app.add_middleware(
@@ -118,7 +111,7 @@ async def ask(query: QueryModel):
 @app.post("/process_pdf/")
 async def process_pdf(file: UploadFile = File(...), query: str = Form(...), translation_language: str = Form(None)):
     """
-    Endpoint to process a PDF file, extract text, chunk it, and answer a query based on the content using Cohere LLM.
+    Endpoint to process a PDF file, extract text, chunk it, and answer a query based on the content using Llama 3.2.
     Optionally translates the answer to the specified language.
     """
     try:
@@ -143,7 +136,7 @@ async def process_pdf(file: UploadFile = File(...), query: str = Form(...), tran
                 break
             combined_chunks += chunk + " "
         
-        # Prepare prompt for Cohere
+        # Prepare prompt for Llama 3.2
         prompt = f"""You are a lawyer assistant. Please answer the following question based on the given document content.
 
 Document content: {combined_chunks.strip()}
@@ -152,17 +145,9 @@ Question: {query}
 
 Please provide a detailed answer based on the given document."""
 
-        # Generate response using Cohere
-        response = cohere_client.generate(
-            model='command',
-            prompt=prompt,
-            max_tokens=500,
-            temperature=0.7,
-            k=0,
-            stop_sequences=[],
-            return_likelihoods='NONE'
-        )
-        answer = response.generations[0].text
+        # Generate response using Llama 3.2
+        response = llm(prompt, max_tokens=500, temperature=0.7, stop=["Human:", "AI:"])
+        answer = response['choices'][0]['text']
 
         # Handle translation if requested
         if translation_language:
@@ -196,11 +181,9 @@ async def chatbot(request: ChatbotRequest):
     """
     user_message = request.user_message
 
-    # Prepare context and prompt for Gemini
-    context = """You are an AI lawyer assistant. Provide legal advice, potential charges, 
-    rights, and next steps based on the user's situation. Be concise and factual."""
-    
-    prompt = f"""Context: {context}
+    # Prepare context and prompt for Llama 3.2
+    prompt = f"""You are an AI lawyer assistant. Provide legal advice, potential charges, 
+    rights, and next steps based on the user's situation. Be concise and factual.
 
 User situation: {user_message}
 
@@ -223,9 +206,9 @@ Next steps:
 - [Step 2]
 """
 
-    # Generate response using Gemini
-    response = model.generate_content(prompt)
-    answer = response.text
+    # Generate response using Llama 3.2
+    response = llm(prompt, max_tokens=1000, temperature=0.7, stop=["Human:", "AI:"])
+    answer = response['choices'][0]['text']
 
     # Parse the response
     lawyer_response = ""
